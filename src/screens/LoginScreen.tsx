@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,21 +6,63 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   ScrollView,
+  Modal,
+  TextInput,
+  Alert,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { getEffectiveBaseUrl, setBackendUrl, api } from '../api';
 
 export const LoginScreen: React.FC = () => {
   const { loginWithGoogle, isLoading } = useAuth();
   const { colors, isDark } = useTheme();
+
   const [errorMessage, setErrorMessage] = useState('');
+  const [currentBackendUrl, setCurrentBackendUrl] = useState(getEffectiveBaseUrl());
+  const [urlModalVisible, setUrlModalVisible] = useState(false);
+  const [inputUrl, setInputUrl] = useState('');
+  const [testingUrl, setTestingUrl] = useState(false);
+  const [serverOnline, setServerOnline] = useState<boolean | null>(null);
+
+  // Email prompt modal
+  const [emailModalVisible, setEmailModalVisible] = useState(false);
+  const [googleEmail, setGoogleEmail] = useState('investor@enam.com');
+
+  useEffect(() => {
+    // Check initial server health
+    api.getAuthStatus().then((res) => {
+      setServerOnline(!!res);
+    }).catch(() => {
+      setServerOnline(false);
+    });
+  }, [currentBackendUrl]);
 
   const handleGoogleSignIn = async (emailOverride?: string) => {
     setErrorMessage('');
-    const emailToUse = emailOverride || 'investor@enam.com';
+    const emailToUse = emailOverride || googleEmail.trim() || 'investor@enam.com';
     const res = await loginWithGoogle(emailToUse, emailToUse.split('@')[0]);
     if (!res.success) {
-      setErrorMessage(res.error || 'Google Sign-In failed. Please check network connection.');
+      setErrorMessage(
+        `${res.error || 'Connection failed.'}\n(Target server: ${currentBackendUrl})`
+      );
+    }
+  };
+
+  const handleSaveBackendUrl = async () => {
+    if (!inputUrl.trim()) return;
+    setTestingUrl(true);
+    const result = await setBackendUrl(inputUrl.trim());
+    setTestingUrl(false);
+
+    if (result.success) {
+      const newUrl = getEffectiveBaseUrl();
+      setCurrentBackendUrl(newUrl);
+      setServerOnline(true);
+      setUrlModalVisible(false);
+      Alert.alert('Server Connected', `Successfully connected to:\n${newUrl}`);
+    } else {
+      Alert.alert('Connection Failed', `Could not reach ${inputUrl}.\nError: ${result.error}`);
     }
   };
 
@@ -82,6 +124,15 @@ export const LoginScreen: React.FC = () => {
         {errorMessage ? (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>⚠ {errorMessage}</Text>
+            <TouchableOpacity
+              style={styles.errorFixBtn}
+              onPress={() => {
+                setInputUrl(currentBackendUrl.replace('/api', ''));
+                setUrlModalVisible(true);
+              }}
+            >
+              <Text style={styles.errorFixBtnText}>⚙ Update Backend URL</Text>
+            </TouchableOpacity>
           </View>
         ) : null}
 
@@ -96,7 +147,7 @@ export const LoginScreen: React.FC = () => {
           <TouchableOpacity
             style={[styles.googleButton, { backgroundColor: isDark ? '#ffffff' : '#4285F4' }]}
             activeOpacity={0.85}
-            onPress={() => handleGoogleSignIn()}
+            onPress={() => setEmailModalVisible(true)}
             disabled={isLoading}
           >
             {isLoading ? (
@@ -112,6 +163,23 @@ export const LoginScreen: React.FC = () => {
               </View>
             )}
           </TouchableOpacity>
+
+          {/* Backend Status & Change Button */}
+          <View style={styles.serverStatusRow}>
+            <View style={[styles.statusDot, { backgroundColor: serverOnline ? '#10b981' : '#f59e0b' }]} />
+            <Text style={[styles.serverStatusText, { color: colors.textMuted }]} numberOfLines={1}>
+              {serverOnline ? 'Backend Online: ' : 'Target: '}
+              {currentBackendUrl.replace('http://', '').replace('https://', '')}
+            </Text>
+            <TouchableOpacity
+              onPress={() => {
+                setInputUrl(currentBackendUrl.replace('/api', ''));
+                setUrlModalVisible(true);
+              }}
+            >
+              <Text style={[styles.changeServerText, { color: colors.primary }]}>[Change]</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Legal Disclaimer */}
@@ -119,6 +187,100 @@ export const LoginScreen: React.FC = () => {
           Under SEBI regulations and Indian Contract Act (1872), equity trading is restricted to individuals 18 years of age or older.
         </Text>
       </ScrollView>
+
+      {/* ================= GOOGLE EMAIL SELECTION MODAL ================= */}
+      <Modal visible={emailModalVisible} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.cardBg, borderColor: colors.cardBorder }]}>
+            <View style={styles.modalHeaderRow}>
+              <View style={[styles.googleGSmall, { backgroundColor: '#4285F4' }]}>
+                <Text style={styles.googleGTextSmall}>G</Text>
+              </View>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Google Sign-In</Text>
+            </View>
+            <Text style={[styles.modalSub, { color: colors.textSecondary }]}>
+              Enter or confirm the Google Account email you wish to sign in with:
+            </Text>
+
+            <TextInput
+              style={[
+                styles.modalInput,
+                { backgroundColor: colors.subtleBg, color: colors.text, borderColor: colors.cardBorder },
+              ]}
+              placeholder="yourname@gmail.com"
+              placeholderTextColor={colors.textMuted}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              value={googleEmail}
+              onChangeText={setGoogleEmail}
+            />
+
+            <View style={styles.modalBtnRow}>
+              <TouchableOpacity
+                style={[styles.modalCancelBtn, { borderColor: colors.cardBorder }]}
+                onPress={() => setEmailModalVisible(false)}
+              >
+                <Text style={[styles.modalCancelText, { color: colors.text }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalConfirmBtn, { backgroundColor: colors.primary }]}
+                onPress={() => {
+                  setEmailModalVisible(false);
+                  handleGoogleSignIn(googleEmail);
+                }}
+              >
+                <Text style={styles.modalConfirmText}>Sign In ➔</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ================= CONFIGURE BACKEND URL MODAL ================= */}
+      <Modal visible={urlModalVisible} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.cardBg, borderColor: colors.cardBorder }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>⚙ Backend Server URL</Text>
+            <Text style={[styles.modalSub, { color: colors.textSecondary }]}>
+              If your backend is deployed on Render, paste its URL below so the app connects to it:
+            </Text>
+
+            <TextInput
+              style={[
+                styles.modalInput,
+                { backgroundColor: colors.subtleBg, color: colors.text, borderColor: colors.cardBorder },
+              ]}
+              placeholder="https://your-backend.onrender.com"
+              placeholderTextColor={colors.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              value={inputUrl}
+              onChangeText={setInputUrl}
+            />
+
+            <View style={styles.modalBtnRow}>
+              <TouchableOpacity
+                style={[styles.modalCancelBtn, { borderColor: colors.cardBorder }]}
+                onPress={() => setUrlModalVisible(false)}
+                disabled={testingUrl}
+              >
+                <Text style={[styles.modalCancelText, { color: colors.text }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalConfirmBtn, { backgroundColor: colors.primary }]}
+                onPress={handleSaveBackendUrl}
+                disabled={testingUrl}
+              >
+                {testingUrl ? (
+                  <ActivityIndicator color="#ffffff" size="small" />
+                ) : (
+                  <Text style={styles.modalConfirmText}>Connect &amp; Save</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -213,6 +375,19 @@ const styles = StyleSheet.create({
     color: '#991b1b',
     fontSize: 12,
     fontWeight: '600',
+    marginBottom: 6,
+  },
+  errorFixBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#ef4444',
+    borderRadius: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  errorFixBtnText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '700',
   },
   authCard: {
     borderRadius: 14,
@@ -260,11 +435,109 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.2,
   },
+  serverStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 14,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  serverStatusText: {
+    fontSize: 10,
+    flex: 1,
+  },
+  changeServerText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
   footerNote: {
     fontSize: 11,
     textAlign: 'center',
     lineHeight: 16,
     paddingHorizontal: 8,
     opacity: 0.75,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalContent: {
+    width: '100%',
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 20,
+    elevation: 6,
+  },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 6,
+  },
+  googleGSmall: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  googleGTextSmall: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  modalSub: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 16,
+    marginTop: 4,
+  },
+  modalInput: {
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    marginBottom: 16,
+  },
+  modalBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  modalCancelText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  modalConfirmBtn: {
+    flex: 1,
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  modalConfirmText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });
