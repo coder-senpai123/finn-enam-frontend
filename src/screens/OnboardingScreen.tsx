@@ -70,20 +70,49 @@ export const OnboardingScreen: React.FC = () => {
     setErrorMessage('');
     setIsLoading(true);
     try {
-      const res = await completeOnboarding(ageNumber, investorType, selectedStocks);
-      if (res.success) {
-        if (user?.personality) {
-          setGeneratedPersonality(user.personality);
-        }
-        setStep(4);
-      } else {
-        setErrorMessage(res.error || 'Failed generating personality. Please try again.');
+      // Synthesize on-device/backend preview for Step 4
+      const inv = investorType.toLowerCase();
+      let archetype = "The Disciplined Compounder";
+      let tagline = "Patient capital focused on balance sheet safety and return on capital moats.";
+      let description = `At ${ageNumber} years of age, you approach Indian equities with a multi-year horizon, prioritizing businesses with consistent ROCE/ROE (>15%), prudent leverage, and enduring competitive moats.`;
+      let traits = ["Balance Sheet Solvency", "Cash Quality & Free Cash Flow", "Low Turnover Compounding"];
+      let feedFocus = "Annual reports, capital expenditure disclosures, and long-term earnings durability.";
+
+      if (inv.includes("short") || inv.includes("risk")) {
+        archetype = "The Tactical Momentum Hunter";
+        tagline = "Agile participant seeking asymmetric risk-reward on breakout catalysts and volume shifts.";
+        description = `At ${ageNumber} years of age, you seek high-beta alpha in dynamic stocks, prioritizing immediate price catalysts, institutional volume spikes, and breaking material filings.`;
+        traits = ["Catalyst Sensitivity", "Volume Breakout Tracking", "High Risk-Reward Asymmetry"];
+        feedFocus = "Breaking exchange disclosures, volume spikes > 2x average, and earnings surprises.";
+      } else if (inv.includes("regular")) {
+        archetype = "The Strategic Growth Allocator";
+        tagline = "Balanced wealth builder evaluating operational trajectory against fair valuations.";
+        description = `At ${ageNumber} years of age, you maintain a balanced portfolio, analyzing quarterly revenue/margin trends and PEG multiples to capture steady Indian market growth.`;
+        traits = ["Quarterly Momentum", "Fair Valuation Multiple", "Segmental Growth"];
+        feedFocus = "Quarterly financial results, management concalls, and strategic expansion filings.";
       }
+
+      setGeneratedPersonality({
+        archetype,
+        tagline,
+        description,
+        key_traits: traits,
+        feed_focus: feedFocus,
+        risk_profile: inv.includes("short") ? "Aggressive" : inv.includes("long") ? "Moderate Conservative" : "Moderate",
+        priority_categories: ["results", "capex", "dividend"],
+      });
+      setStep(4);
     } catch (e: any) {
-      setErrorMessage(e.message || 'Error completing setup.');
+      setErrorMessage(e.message || 'Error generating personality.');
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleFinishOnboarding = async () => {
+    setIsLoading(true);
+    await completeOnboarding(ageNumber, investorType, selectedStocks);
+    setIsLoading(false);
   };
 
   return (
@@ -432,11 +461,14 @@ export const OnboardingScreen: React.FC = () => {
 
             <TouchableOpacity
               style={[styles.nextButton, { backgroundColor: colors.primary }]}
-              onPress={() => {
-                // Done! AuthContext will now report isOnboarded = true
-              }}
+              onPress={handleFinishOnboarding}
+              disabled={isLoading}
             >
-              <Text style={styles.nextButtonText}>🚀 Launch Personalised Feed</Text>
+              {isLoading ? (
+                <ActivityIndicator color="#ffffff" />
+              ) : (
+                <Text style={styles.nextButtonText}>🚀 Launch Personalised Feed</Text>
+              )}
             </TouchableOpacity>
           </View>
         )}

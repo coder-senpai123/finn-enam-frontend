@@ -21,7 +21,7 @@ export const LoginScreen: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [currentBackendUrl, setCurrentBackendUrl] = useState(getEffectiveBaseUrl());
   const [urlModalVisible, setUrlModalVisible] = useState(false);
-  const [inputUrl, setInputUrl] = useState('');
+  const [inputUrl, setInputUrl] = useState('https://finn-enam-backend.onrender.com');
   const [testingUrl, setTestingUrl] = useState(false);
   const [serverOnline, setServerOnline] = useState<boolean | null>(null);
 

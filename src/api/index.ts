@@ -6,12 +6,13 @@ import { Company, FeedItem, ResearchOutput, AlertTriggered, UserProfile } from '
 
 const CUSTOM_API_URL_KEY = '@finn_custom_api_url';
 
+const PRODUCTION_RENDER_URL = 'https://finn-enam-backend.onrender.com/api';
+
 /**
  * Dynamically resolves the API base URL:
  * 1. Checks explicit EXPO_PUBLIC_API_URL environment variable (from .env or build)
  * 2. If running in Expo Go, extracts LAN host IP (e.g. 172.23.70.244)
- * 3. On Android emulator uses 10.0.2.2
- * 4. Fallback to computer LAN IP
+ * 3. Default in Standalone / Production APK to the live Render backend
  */
 const getDefaultBaseUrl = (): string => {
   // 1. Explicit production / Render URL from .env
@@ -33,15 +34,8 @@ const getDefaultBaseUrl = (): string => {
     }
   }
 
-  if (Platform.OS === 'android') {
-    // If running in development emulator
-    if (__DEV__) {
-      return 'http://10.0.2.2:8000/api';
-    }
-  }
-
-  // Fallback to computer's current Wi-Fi LAN IP
-  return 'http://172.23.70.244:8000/api';
+  // 3. Default to live Render backend
+  return PRODUCTION_RENDER_URL;
 };
 
 export const apiClient = axios.create({
@@ -58,14 +52,18 @@ AsyncStorage.getItem(CUSTOM_API_URL_KEY).then((saved) => {
 }).catch(() => {});
 
 export const setBackendUrl = async (url: string): Promise<{ success: boolean; error?: string }> => {
-  let cleanUrl = url.trim();
+  let cleanUrl = url.trim().replace(/\/+$/, '');
+  // Auto-correct single 'n' typo to 'finn-enam-backend'
+  if (cleanUrl.includes('fin-enam-backend') && !cleanUrl.includes('finn-enam-backend')) {
+    cleanUrl = cleanUrl.replace('fin-enam-backend', 'finn-enam-backend');
+  }
   if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
     cleanUrl = `https://${cleanUrl}`;
   }
   const apiUrl = cleanUrl.endsWith('/api') ? cleanUrl : `${cleanUrl}/api`;
 
   try {
-    const testClient = axios.create({ baseURL: apiUrl, timeout: 6000 });
+    const testClient = axios.create({ baseURL: apiUrl, timeout: 8000 });
     const res = await testClient.get('/auth/status');
     if (res.status === 200) {
       apiClient.defaults.baseURL = apiUrl;
