@@ -1,28 +1,30 @@
 /**
  * useGoogleAuth – Real Google OAuth via expo-auth-session
  *
- * Opens the native Google account picker / browser-based sign-in flow.
- * Works in:
- *   - Expo Go (web redirect via Expo auth proxy)
+ * Opens the Google account picker in a browser sheet. Works in:
+ *   - Expo Go on Android/iOS (via Expo Auth Proxy)
  *   - Standalone APK / web build (finnmobile:// deep link)
  *
- * Google Cloud Console setup:
- *   1. Go to https://console.cloud.google.com/apis/credentials
- *   2. Create (or use existing) OAuth 2.0 Client ID → "Web application"
- *   3. Add Authorised redirect URI:
- *        https://auth.expo.io/@<your-expo-username>/finn-mobile
- *   4. Copy the Client ID into EXPO_PUBLIC_GOOGLE_CLIENT_ID in .env
+ * ── Google Cloud Console setup (one-time) ──────────────────────────────────
+ * 1. Visit: https://console.cloud.google.com/apis/credentials
+ * 2. Open your OAuth 2.0 Client ID → "Web application" type
+ * 3. Under "Authorised redirect URIs" add ALL of these:
+ *      https://auth.expo.io/@yashoct565/finn-mobile
+ *      http://localhost:8081
+ *      http://localhost:19006
+ * 4. Save. Changes can take up to 5 minutes to propagate.
+ * ──────────────────────────────────────────────────────────────────────────
  */
 
 import { useCallback } from 'react';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
-import { makeRedirectUri } from 'expo-auth-session';
 
-// IMPORTANT: This call must be at module top-level so the browser session
-// is completed when the redirect URL is opened by the OS.
+// Completes the auth session when the redirect URL opens the app.
+// Must be called at the module level (not inside a component).
 WebBrowser.maybeCompleteAuthSession();
 
+// The Web OAuth Client ID from Google Cloud Console
 const WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID || '';
 
 export interface GoogleAuthResult {
@@ -36,7 +38,7 @@ export interface GoogleAuthResult {
 }
 
 /**
- * Fetches the user's Google profile using the access token.
+ * Fetches the user's Google profile via the UserInfo v2 endpoint.
  */
 async function fetchGoogleProfile(accessToken: string): Promise<{
   email: string;
@@ -50,22 +52,21 @@ async function fetchGoogleProfile(accessToken: string): Promise<{
   return resp.json();
 }
 
+/**
+ * Hook — call at the top of a screen component.
+ * Returns { request, response, signIn }.
+ * Watch `response` in a useEffect to handle the result.
+ */
 export function useGoogleAuth() {
-  // useAuthRequest from the Google provider handles discovery automatically.
-  // redirectUriOptions: pass `scheme` for native/standalone APKs.
-  // For Expo Go on Android, the Expo auth proxy redirect is used by default.
-  const [request, response, promptAsync] = Google.useAuthRequest(
-    {
-      clientId: WEB_CLIENT_ID,  // Web client ID (works in Expo Go + web)
-      selectAccount: true,       // Always show the account picker
-      scopes: ['openid', 'email', 'profile'],
-    },
-    {
-      // The scheme 'finnmobile' is defined in app.json — handles redirect in APK builds.
-      // In Expo Go the library falls back to the Expo proxy automatically.
-      scheme: 'finnmobile',
-    }
-  );
+  // Google.useAuthRequest automatically sets up the Expo Auth Proxy
+  // redirect URI for Expo Go and uses the native scheme for APK builds.
+  const [request, response, promptAsync] = Google.useAuthRequest({
+    clientId: WEB_CLIENT_ID,
+    selectAccount: true,   // Always show account picker — never auto-select
+    scopes: ['openid', 'email', 'profile'],
+    // redirectUri is intentionally omitted here: expo-auth-session resolves it
+    // automatically per environment (proxy for Expo Go, scheme for APK).
+  });
 
   const signIn = useCallback(async () => {
     if (!request) return;
@@ -76,8 +77,8 @@ export function useGoogleAuth() {
 }
 
 /**
- * Parses the auth-session response into a clean GoogleAuthResult.
- * Call this inside a useEffect watching `response`.
+ * Parses the raw AuthSession response into a typed GoogleAuthResult.
+ * Use inside a useEffect that watches `response`.
  */
 export async function parseGoogleResponse(
   response: ReturnType<typeof Google.useAuthRequest>[1]
@@ -85,17 +86,19 @@ export async function parseGoogleResponse(
   if (!response) return { success: false, error: 'No response yet' };
 
   if (response.type === 'error') {
-    return { success: false, error: (response as any).error?.message || 'Google sign-in error' };
+    const msg = (response as any).error?.message || JSON.stringify((response as any).error);
+    return { success: false, error: `OAuth error: ${msg}` };
   }
 
   if (response.type === 'dismiss' || response.type === 'cancel') {
-    return { success: false, error: 'Sign-in cancelled' };
+    // User closed the picker — not a real error, caller decides what to do
+    return { success: false, error: 'cancelled' };
   }
 
   if (response.type === 'success') {
     const auth = (response as any).authentication;
     if (!auth?.accessToken) {
-      return { success: false, error: 'No access token returned from Google' };
+      return { success: false, error: 'Google did not return an access token' };
     }
     try {
       const profile = await fetchGoogleProfile(auth.accessToken);
@@ -108,9 +111,9 @@ export async function parseGoogleResponse(
         accessToken: auth.accessToken,
       };
     } catch (e: any) {
-      return { success: false, error: e.message || 'Failed to fetch Google profile' };
+      return { success: false, error: e.message || 'Failed to load Google profile' };
     }
   }
 
-  return { success: false, error: `Unexpected OAuth response: ${response.type}` };
+  return { success: false, error: `Unexpected response type: ${response.type}` };
 }

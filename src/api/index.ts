@@ -1,84 +1,16 @@
 import axios from 'axios';
-import { Platform } from 'react-native';
-import Constants from 'expo-constants';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Company, FeedItem, ResearchOutput, AlertTriggered, UserProfile } from '../types';
 
-const CUSTOM_API_URL_KEY = '@finn_custom_api_url';
+// ── Single source of truth: the live Render backend ──────────────────────────
+const BASE_URL = 'https://finn-enam-backend.onrender.com/api';
 
-const PRODUCTION_RENDER_URL = 'https://finn-enam-backend.onrender.com/api';
-
-/**
- * Dynamically resolves the API base URL:
- * 1. Checks explicit EXPO_PUBLIC_API_URL environment variable (from .env or build)
- * 2. If running in Expo Go, extracts LAN host IP (e.g. 172.23.70.244)
- * 3. Default in Standalone / Production APK to the live Render backend
- */
-const getDefaultBaseUrl = (): string => {
-  // 1. Explicit production / Render URL from .env
-  const envUrl = process.env.EXPO_PUBLIC_API_URL;
-  if (envUrl && envUrl.startsWith('http') && !envUrl.includes('localhost')) {
-    return envUrl.endsWith('/api') ? envUrl : `${envUrl}/api`;
-  }
-
-  // 2. In Expo Go, auto-detect development host
-  const hostUri =
-    Constants.expoConfig?.hostUri ||
-    Constants.manifest2?.extra?.expoGo?.debuggerHost ||
-    (Constants as any).manifest?.debuggerHost;
-
-  if (hostUri) {
-    const ip = hostUri.split(':')[0];
-    if (ip && ip !== 'localhost' && ip !== '127.0.0.1') {
-      return `http://${ip}:8000/api`;
-    }
-  }
-
-  // 3. Default to live Render backend
-  return PRODUCTION_RENDER_URL;
-};
-
+// Axios instance — 45 s timeout to survive Render free-tier cold starts
 export const apiClient = axios.create({
-  baseURL: getDefaultBaseUrl(),
-  timeout: 12000,
+  baseURL: BASE_URL,
+  timeout: 45000,
 });
 
-// Restore custom API URL from AsyncStorage if previously configured
-AsyncStorage.getItem(CUSTOM_API_URL_KEY).then((saved) => {
-  if (saved && saved.startsWith('http')) {
-    apiClient.defaults.baseURL = saved.endsWith('/api') ? saved : `${saved}/api`;
-    console.log('[FINN Mobile] Restored custom backend URL:', apiClient.defaults.baseURL);
-  }
-}).catch(() => {});
-
-export const setBackendUrl = async (url: string): Promise<{ success: boolean; error?: string }> => {
-  let cleanUrl = url.trim().replace(/\/+$/, '');
-  // Auto-correct single 'n' typo to 'finn-enam-backend'
-  if (cleanUrl.includes('fin-enam-backend') && !cleanUrl.includes('finn-enam-backend')) {
-    cleanUrl = cleanUrl.replace('fin-enam-backend', 'finn-enam-backend');
-  }
-  if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
-    cleanUrl = `https://${cleanUrl}`;
-  }
-  const apiUrl = cleanUrl.endsWith('/api') ? cleanUrl : `${cleanUrl}/api`;
-
-  try {
-    const testClient = axios.create({ baseURL: apiUrl, timeout: 8000 });
-    const res = await testClient.get('/auth/status');
-    if (res.status === 200) {
-      apiClient.defaults.baseURL = apiUrl;
-      await AsyncStorage.setItem(CUSTOM_API_URL_KEY, apiUrl);
-      return { success: true };
-    }
-    return { success: false, error: `Server responded with status ${res.status}` };
-  } catch (e: any) {
-    return { success: false, error: e.message || 'Could not connect to specified URL' };
-  }
-};
-
-export const getEffectiveBaseUrl = (): string => {
-  return apiClient.defaults.baseURL || getDefaultBaseUrl();
-};
+// ── API surface ───────────────────────────────────────────────────────────────
 
 export const api = {
   loginWithGoogle: async (
@@ -87,12 +19,7 @@ export const api = {
     token?: string,
     avatar?: string
   ): Promise<{ user: UserProfile; is_onboarded: boolean; token: string }> => {
-    const res = await apiClient.post('/auth/google', {
-      email,
-      name,
-      token,
-      avatar,
-    });
+    const res = await apiClient.post('/auth/google', { email, name, token, avatar });
     return res.data;
   },
 
@@ -115,7 +42,7 @@ export const api = {
     try {
       const res = await apiClient.get<UserProfile>(`/auth/me?email=${encodeURIComponent(email)}`);
       return res.data;
-    } catch (e) {
+    } catch {
       return null;
     }
   },
@@ -124,7 +51,7 @@ export const api = {
     try {
       const res = await apiClient.get('/auth/status');
       return res.data;
-    } catch (e) {
+    } catch {
       return { mongodb_connected: false };
     }
   },
@@ -132,13 +59,11 @@ export const api = {
   getFeed: async (windowHours: number = 24, email?: string): Promise<FeedItem[]> => {
     try {
       let url = `/feed?window_hours=${windowHours}`;
-      if (email) {
-        url += `&email=${encodeURIComponent(email)}`;
-      }
+      if (email) url += `&email=${encodeURIComponent(email)}`;
       const res = await apiClient.get<FeedItem[]>(url);
       return res.data;
     } catch (e) {
-      console.warn('Backend feed call failed:', e);
+      console.warn('Feed call failed:', e);
       return [];
     }
   },
@@ -149,7 +74,7 @@ export const api = {
       const res = await apiClient.get<Company[]>(url);
       return res.data;
     } catch (e) {
-      console.warn('Backend portfolio call failed:', e);
+      console.warn('Portfolio call failed:', e);
       return [];
     }
   },
@@ -160,7 +85,6 @@ export const api = {
       return { success: true };
     } catch (e: any) {
       const msg = e.response?.data?.detail || e.message || 'Network error';
-      console.error('Error adding stock:', msg);
       return { success: false, error: msg };
     }
   },
@@ -170,8 +94,7 @@ export const api = {
       const url = email ? `/portfolio/${ticker}?email=${encodeURIComponent(email)}` : `/portfolio/${ticker}`;
       await apiClient.delete(url);
       return true;
-    } catch (e) {
-      console.error('Error removing stock:', e);
+    } catch {
       return false;
     }
   },
@@ -180,17 +103,13 @@ export const api = {
     try {
       const res = await apiClient.get<AlertTriggered[]>('/alerts/triggered');
       return res.data;
-    } catch (e) {
+    } catch {
       return [];
     }
   },
 
   performResearch: async (ticker: string, module: string, query?: string): Promise<ResearchOutput> => {
-    const res = await apiClient.post<ResearchOutput>('/research', {
-      ticker,
-      module,
-      query,
-    });
+    const res = await apiClient.post<ResearchOutput>('/research', { ticker, module, query });
     return res.data;
   },
 };
