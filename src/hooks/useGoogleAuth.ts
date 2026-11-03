@@ -2,29 +2,34 @@
  * useGoogleAuth – Real Google OAuth via expo-auth-session
  *
  * Uses the official Expo Auth Proxy (https://auth.expo.io/@yashoct565/finn-mobile)
- * with ResponseType.Token so Google receives an HTTPS redirect URI (satisfying
- * the strict requirement for Google Cloud "Web application" client type).
+ * with ResponseType.Token and direct Google Discovery endpoint to guarantee
+ * Google receives a valid HTTPS redirect URI (satisfying Google Cloud Web application client rules).
  */
 
 import { useCallback } from 'react';
 import { Platform } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
-import * as Google from 'expo-auth-session/providers/google';
-import { ResponseType } from 'expo-auth-session';
+import { useAuthRequest, ResponseType } from 'expo-auth-session';
 
-// Completes the auth session when redirect URL opens
+// Completes the auth session when browser redirects back
 WebBrowser.maybeCompleteAuthSession();
 
-const WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID || '656488962423-0q9a8tonnl7q1eu5uq6nl7mechl24agt.apps.googleusercontent.com';
+const WEB_CLIENT_ID =
+  process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ||
+  '656488962423-0q9a8tonnl7q1eu5uq6nl7mechl24agt.apps.googleusercontent.com';
 
-// Google "Web application" client type strictly forbids custom scheme URIs (like exp:// or finnmobile://)
-// It requires an https:// redirect URI. For Expo apps, this is the Expo Auth Proxy URI:
-const getRedirectUri = (): string => {
-  if (Platform.OS === 'web') {
-    return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8081';
-  }
-  return 'https://auth.expo.io/@yashoct565/finn-mobile';
+const GOOGLE_DISCOVERY = {
+  authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+  tokenEndpoint: 'https://oauth2.googleapis.com/token',
+  revocationEndpoint: 'https://oauth2.googleapis.com/revoke',
+  userInfoEndpoint: 'https://openidconnect.googleapis.com/v1/userinfo',
 };
+
+// Must be an https:// URL registered in Google Cloud Console
+export const REDIRECT_URI =
+  Platform.OS === 'web' && typeof window !== 'undefined'
+    ? window.location.origin
+    : 'https://auth.expo.io/@yashoct565/finn-mobile';
 
 export interface GoogleAuthResult {
   success: boolean;
@@ -37,7 +42,7 @@ export interface GoogleAuthResult {
 }
 
 /**
- * Fetches the user's Google profile using the access token.
+ * Fetches user profile from Google's UserInfo API
  */
 async function fetchGoogleProfile(accessToken: string): Promise<{
   email: string;
@@ -48,25 +53,34 @@ async function fetchGoogleProfile(accessToken: string): Promise<{
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!resp.ok) {
-    const errText = await resp.text();
-    throw new Error(`Google UserInfo API error: ${resp.status} - ${errText}`);
+    const err = await resp.text();
+    throw new Error(`Google UserInfo API error (${resp.status}): ${err}`);
   }
   return resp.json();
 }
 
 export function useGoogleAuth() {
-  const redirectUri = getRedirectUri();
-
-  const [request, response, promptAsync] = Google.useAuthRequest({
-    clientId: WEB_CLIENT_ID,
-    responseType: ResponseType.Token,
-    redirectUri: redirectUri,
-    selectAccount: true,
-    scopes: ['openid', 'email', 'profile'],
-  });
+  const [request, response, promptAsync] = useAuthRequest(
+    {
+      clientId: WEB_CLIENT_ID,
+      responseType: ResponseType.Token,
+      redirectUri: REDIRECT_URI,
+      scopes: ['openid', 'email', 'profile'],
+      usePKCE: false, // PKCE not needed for implicit token grant
+      extraParams: {
+        prompt: 'select_account',
+      },
+    },
+    GOOGLE_DISCOVERY
+  );
 
   const signIn = useCallback(async () => {
-    if (!request) return;
+    if (!request) {
+      console.warn('[FINN OAuth] Request is not loaded yet');
+      return;
+    }
+    console.log('[FINN OAuth] Launching Google OAuth with redirectUri:', request.redirectUri);
+    console.log('[FINN OAuth] Full Auth URL:', request.url);
     await promptAsync();
   }, [request, promptAsync]);
 
@@ -74,16 +88,16 @@ export function useGoogleAuth() {
 }
 
 /**
- * Parses the raw AuthSession response into a typed GoogleAuthResult.
+ * Parses the raw AuthSession response into a typed GoogleAuthResult
  */
 export async function parseGoogleResponse(
-  response: ReturnType<typeof Google.useAuthRequest>[1]
+  response: any
 ): Promise<GoogleAuthResult> {
   if (!response) return { success: false, error: 'No response yet' };
 
   if (response.type === 'error') {
-    const msg = (response as any).error?.message || JSON.stringify((response as any).error);
-    return { success: false, error: `OAuth error: ${msg}` };
+    const msg = response.error?.message || JSON.stringify(response.error);
+    return { success: false, error: `Google OAuth error: ${msg}` };
   }
 
   if (response.type === 'dismiss' || response.type === 'cancel') {
@@ -92,11 +106,11 @@ export async function parseGoogleResponse(
 
   if (response.type === 'success') {
     const accessToken =
-      (response as any).authentication?.accessToken ||
-      (response as any).params?.access_token;
+      response.authentication?.accessToken ||
+      response.params?.access_token;
     const idToken =
-      (response as any).authentication?.idToken ||
-      (response as any).params?.id_token;
+      response.authentication?.idToken ||
+      response.params?.id_token;
 
     if (!accessToken) {
       return { success: false, error: 'Google did not return an access token' };
@@ -110,10 +124,10 @@ export async function parseGoogleResponse(
         name: profile.name,
         avatar: profile.picture,
         idToken: idToken || undefined,
-        accessToken: accessToken,
+        accessToken,
       };
     } catch (e: any) {
-      return { success: false, error: e.message || 'Failed to load Google profile' };
+      return { success: false, error: e.message || 'Failed to fetch Google profile' };
     }
   }
 
