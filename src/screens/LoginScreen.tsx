@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -6,68 +6,60 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   ScrollView,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { useGoogleAuth, parseGoogleResponse } from '../hooks/useGoogleAuth';
 
 export const LoginScreen: React.FC = () => {
   const { loginWithGoogle, isLoading } = useAuth();
-  const { colors, isDark } = useTheme();
-  const { request, response, signIn } = useGoogleAuth();
+  const { colors } = useTheme();
 
+  const [name, setName] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
-  const [oauthLoading, setOauthLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
-  // ── Handle the Google OAuth response ──────────────────────────────────────
-  useEffect(() => {
-    if (!response) return;
-    (async () => {
-      setOauthLoading(true);
-      setErrorMessage('');
-      try {
-        const result = await parseGoogleResponse(response);
+  const handleContinue = async () => {
+    const cleanName = name.trim();
+    if (!cleanName) {
+      setErrorMessage('Please enter your name to continue.');
+      return;
+    }
+    if (cleanName.length < 2) {
+      setErrorMessage('Name must be at least 2 characters long.');
+      return;
+    }
 
-        if (!result.success) {
-          // Silently ignore user-cancelled flows
-          if (result.error !== 'cancelled') {
-            setErrorMessage(result.error || 'Google sign-in failed. Please try again.');
-          }
-          return;
-        }
-
-        // Send real Google profile to the backend
-        const authRes = await loginWithGoogle(
-          result.email!,
-          result.name,
-          result.idToken || result.accessToken,
-          result.avatar,
-        );
-
-        if (!authRes.success) {
-          setErrorMessage(authRes.error || 'Could not sign in. Please try again.');
-        }
-      } catch (e: any) {
-        setErrorMessage(e.message || 'An error occurred during sign-in.');
-      } finally {
-        setOauthLoading(false);
-      }
-    })();
-  }, [response]);
-
-  // ── Button handler ────────────────────────────────────────────────────────
-  const handleSignIn = () => {
     setErrorMessage('');
-    signIn();
+    setSubmitting(true);
+
+    try {
+      // Create clean email identifier from name for persistent backend storage
+      const emailHandle = cleanName.toLowerCase().replace(/[^a-z0-9]/g, '') || 'investor';
+      const userEmail = `${emailHandle}@investor.enam.com`;
+
+      const res = await loginWithGoogle(userEmail, cleanName);
+      if (!res.success) {
+        setErrorMessage(res.error || 'Could not start session. Please try again.');
+      }
+    } catch (e: any) {
+      setErrorMessage(e.message || 'An unexpected error occurred.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const busy = isLoading || oauthLoading;
+  const busy = isLoading || submitting;
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.bg }]}>
+    <KeyboardAvoidingView
+      style={[styles.container, { backgroundColor: colors.bg }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
       <ScrollView contentContainerStyle={styles.scrollContent} bounces={false}>
-
-        {/* ── Brand ── */}
+        {/* ── Brand Header ── */}
         <View style={styles.brandBox}>
           <View style={[styles.logoBadge, { backgroundColor: colors.primary }]}>
             <Text style={styles.logoBadgeText}>F</Text>
@@ -81,7 +73,7 @@ export const LoginScreen: React.FC = () => {
           </Text>
         </View>
 
-        {/* ── Features ── */}
+        {/* ── Feature Highlights ── */}
         <View style={[styles.featureCard, { backgroundColor: colors.cardBg, borderColor: colors.cardBorder }]}>
           <View style={styles.featureRow}>
             <Text style={styles.featureIcon}>⚡</Text>
@@ -118,56 +110,70 @@ export const LoginScreen: React.FC = () => {
           </View>
         </View>
 
-        {/* ── Error ── */}
+        {/* ── Error Box ── */}
         {errorMessage ? (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>⚠ {errorMessage}</Text>
           </View>
         ) : null}
 
-        {/* ── Sign-In Card ── */}
+        {/* ── Name Entry Card ── */}
         <View style={[styles.authCard, { backgroundColor: colors.cardBg, borderColor: colors.cardBorder }]}>
-          <Text style={[styles.cardTitle, { color: colors.text }]}>Sign In</Text>
+          <Text style={[styles.cardTitle, { color: colors.text }]}>Welcome to FINN</Text>
           <Text style={[styles.cardDesc, { color: colors.textSecondary }]}>
-            Tap below — Google will open and let you choose an account.
+            What should FINN call you? Enter your name to begin your personalised intelligence setup.
           </Text>
+
+          <View style={styles.inputWrapper}>
+            <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>YOUR FULL NAME</Text>
+            <TextInput
+              style={[
+                styles.nameInput,
+                {
+                  backgroundColor: colors.subtleBg,
+                  color: colors.text,
+                  borderColor: colors.cardBorder,
+                },
+              ]}
+              placeholder="e.g. Yash"
+              placeholderTextColor={colors.textMuted}
+              value={name}
+              onChangeText={(text) => {
+                setName(text);
+                if (errorMessage) setErrorMessage('');
+              }}
+              autoCapitalize="words"
+              autoCorrect={false}
+              returnKeyType="done"
+              onSubmitEditing={handleContinue}
+              editable={!busy}
+            />
+          </View>
 
           <TouchableOpacity
             style={[
-              styles.googleButton,
-              { backgroundColor: isDark ? '#ffffff' : '#4285F4' },
-              busy && styles.googleButtonDisabled,
+              styles.continueButton,
+              { backgroundColor: colors.primary },
+              busy && styles.continueButtonDisabled,
             ]}
             activeOpacity={0.85}
-            onPress={handleSignIn}
+            onPress={handleContinue}
             disabled={busy}
           >
             {busy ? (
-              <View style={styles.googleButtonContent}>
-                <ActivityIndicator color={isDark ? '#000000' : '#ffffff'} />
-                <Text style={[styles.googleButtonText, { color: isDark ? '#000000' : '#ffffff' }]}>
-                  {oauthLoading ? 'Signing in…' : 'Loading…'}
-                </Text>
-              </View>
+              <ActivityIndicator color="#ffffff" />
             ) : (
-              <View style={styles.googleButtonContent}>
-                <View style={[styles.googleG, { backgroundColor: isDark ? '#4285F4' : '#ffffff' }]}>
-                  <Text style={[styles.googleGText, { color: isDark ? '#ffffff' : '#4285F4' }]}>G</Text>
-                </View>
-                <Text style={[styles.googleButtonText, { color: isDark ? '#000000' : '#ffffff' }]}>
-                  Continue with Google
-                </Text>
-              </View>
+              <Text style={styles.continueButtonText}>Continue ➔</Text>
             )}
           </TouchableOpacity>
         </View>
 
-        {/* ── Legal ── */}
+        {/* ── Legal Footer ── */}
         <Text style={[styles.footerNote, { color: colors.textMuted }]}>
           Under SEBI regulations and Indian Contract Act (1872), equity trading is restricted to individuals 18 years of age or older.
         </Text>
       </ScrollView>
-    </View>
+    </KeyboardAvoidingView>
   );
 };
 
@@ -236,29 +242,41 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     elevation: 2,
   },
-  cardTitle: { fontSize: 18, fontWeight: '800', marginBottom: 4 },
+  cardTitle: { fontSize: 20, fontWeight: '800', marginBottom: 4 },
   cardDesc: { fontSize: 13, lineHeight: 18, marginBottom: 20 },
 
-  // Google button
-  googleButton: {
+  inputWrapper: {
+    marginBottom: 18,
+  },
+  inputLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    marginBottom: 6,
+  },
+  nameInput: {
+    borderWidth: 1,
     borderRadius: 10,
-    paddingVertical: 15,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+
+  continueButton: {
+    borderRadius: 10,
+    paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 2,
   },
-  googleButtonDisabled: { opacity: 0.7 },
-  googleButtonContent: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  googleG: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    justifyContent: 'center',
-    alignItems: 'center',
+  continueButtonDisabled: { opacity: 0.7 },
+  continueButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 0.4,
   },
-  googleGText: { fontSize: 15, fontWeight: '900' },
-  googleButtonText: { fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
 
   // Footer
   footerNote: {
