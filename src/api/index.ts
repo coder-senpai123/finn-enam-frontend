@@ -2,11 +2,15 @@ import axios from 'axios';
 import { Company, FeedItem, ResearchOutput, AlertTriggered, UserProfile } from '../types';
 
 // ── Single source of truth: the live Render backend ──────────────────────────
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://finn-enam-backend.onrender.com/api';
+const getProductionBaseUrl = (): string => {
+  const envUrl = process.env.EXPO_PUBLIC_API_URL || 'https://finn-enam-backend.onrender.com/api';
+  const clean = envUrl.trim().replace(/\/+$/, '');
+  return clean.endsWith('/api') ? clean : `${clean}/api`;
+};
 
 // Axios instance — 45 s timeout to survive Render free-tier cold starts
 export const apiClient = axios.create({
-  baseURL: BASE_URL,
+  baseURL: getProductionBaseUrl(),
   timeout: 45000,
 });
 
